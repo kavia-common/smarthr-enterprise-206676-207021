@@ -21,14 +21,22 @@ if sudo -u postgres ${PG_BIN}/pg_isready -p ${DB_PORT} > /dev/null 2>&1; then
     echo "User: ${DB_USER}"
     echo "Port: ${DB_PORT}"
     echo ""
+
+    # Ensure schema exists even if server was already running (preview resiliency)
+    if [ -f "$(dirname "$0")/schema.sql" ]; then
+        echo "Running schema initialization (server already running)..."
+        chmod +x "$(dirname "$0")/init_schema.sh" 2>/dev/null || true
+        "$(dirname "$0")/init_schema.sh" || echo "⚠ Schema init encountered an error (see logs above)"
+    fi
+
     echo "To connect to the database, use:"
     echo "psql -h localhost -U ${DB_USER} -d ${DB_NAME} -p ${DB_PORT}"
-    
+
     # Check if connection info file exists
     if [ -f "db_connection.txt" ]; then
         echo "Or use: $(cat db_connection.txt)"
     fi
-    
+
     echo ""
     echo "Script stopped - server already running."
     exit 0
@@ -38,10 +46,18 @@ fi
 if pgrep -f "postgres.*-p ${DB_PORT}" > /dev/null 2>&1; then
     echo "Found existing PostgreSQL process on port ${DB_PORT}"
     echo "Attempting to verify connection..."
-    
+
     # Try to connect and verify the database exists
     if sudo -u postgres ${PG_BIN}/psql -p ${DB_PORT} -d ${DB_NAME} -c '\q' 2>/dev/null; then
         echo "Database ${DB_NAME} is accessible."
+
+        # Ensure schema exists even if server was already running (preview resiliency)
+        if [ -f "$(dirname "$0")/schema.sql" ]; then
+            echo "Running schema initialization (existing process)..."
+            chmod +x "$(dirname "$0")/init_schema.sh" 2>/dev/null || true
+            "$(dirname "$0")/init_schema.sh" || echo "⚠ Schema init encountered an error (see logs above)"
+        fi
+
         echo "Script stopped - server already running."
         exit 0
     fi
@@ -106,10 +122,6 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO ${DB_USER};
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON FUNCTIONS TO ${DB_USER};
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TYPES TO ${DB_USER};
 
--- If you want the user to be able to create objects without restrictions,
--- you can make them the owner of the public schema (optional but effective)
--- ALTER SCHEMA public OWNER TO ${DB_USER};
-
 -- Alternative: Grant all privileges on schema public to the user
 GRANT ALL ON SCHEMA public TO ${DB_USER};
 
@@ -141,6 +153,15 @@ export POSTGRES_PASSWORD="${DB_PASSWORD}"
 export POSTGRES_DB="${DB_NAME}"
 export POSTGRES_PORT="${DB_PORT}"
 EOF
+
+# Initialize schema + seed data for previews
+if [ -f "$(dirname "$0")/schema.sql" ]; then
+    echo "Applying HRMS schema and seed data..."
+    chmod +x "$(dirname "$0")/init_schema.sh" 2>/dev/null || true
+    "$(dirname "$0")/init_schema.sh"
+else
+    echo "⚠ schema.sql not found; skipping HRMS schema initialization"
+fi
 
 echo "PostgreSQL setup complete!"
 echo "Database: ${DB_NAME}"
